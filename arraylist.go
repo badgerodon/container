@@ -1,8 +1,12 @@
 package container
 
+//go:generate goreify github.com/badgerodon/container.ArrayList numeric,string
+
+import "github.com/badgerodon/goreify/generics"
+
 // An ArrayList is a growable, dynamic array
 type ArrayList struct {
-	items []interface{} /* ITEM */
+	items []generics.T1
 }
 
 // NewArrayList creates a new ArrayList
@@ -11,7 +15,7 @@ func NewArrayList() *ArrayList {
 }
 
 // Add adds an item to the end of the list
-func (list *ArrayList) Add(item interface{} /* ITEM */) {
+func (list *ArrayList) Add(item generics.T1) {
 	list.items = append(list.items, item)
 }
 
@@ -21,23 +25,23 @@ func (list *ArrayList) Clear() {
 }
 
 // Contains determines whether an element is in the list
-func (list *ArrayList) Contains(item interface{} /* ITEM */) bool {
+func (list *ArrayList) Contains(item generics.T1) bool {
 	return list.IndexOf(item) >= 0
 }
 
 // Fill adds all the items to the end of the list
-func (list *ArrayList) Fill(items []interface{} /* ITEM */) {
+func (list *ArrayList) Fill(items []generics.T1) {
 	list.items = append(list.items, items...)
 }
 
 // Get returns the item at the index in the list
-func (list *ArrayList) Get(idx int) interface{} /* ITEM */ {
+func (list *ArrayList) Get(idx int) generics.T1 {
 	return list.items[idx]
 }
 
 // IndexOf searches for the specified item and returns the
 // index of the first occurence, or -1 if not found
-func (list *ArrayList) IndexOf(item interface{} /* ITEM */) int {
+func (list *ArrayList) IndexOf(item generics.T1) int {
 	for i, t := range list.items {
 		if t == item {
 			return i
@@ -47,7 +51,7 @@ func (list *ArrayList) IndexOf(item interface{} /* ITEM */) int {
 }
 
 // Insert inserts the item into the list at the specified index
-func (list *ArrayList) Insert(idx int, item interface{} /* ITEM */) {
+func (list *ArrayList) Insert(idx int, item generics.T1) {
 	if idx > len(list.items) {
 		list.Truncate(idx + 1)
 	}
@@ -60,7 +64,7 @@ func (list *ArrayList) Len() int {
 }
 
 // Remove removes the first occurence of the item from the list
-func (list *ArrayList) Remove(item interface{} /* ITEM */) {
+func (list *ArrayList) Remove(item generics.T1) {
 	idx := list.IndexOf(item)
 	if idx < 0 {
 		return
@@ -90,7 +94,7 @@ func (list *ArrayList) Swap(i, j int) {
 
 // Truncate changes the size of the list to sz, any excess items are removed
 func (list *ArrayList) Truncate(sz int) {
-	items := make([]interface{} /* ITEM */, sz)
+	items := make([]generics.T1, sz)
 	copy(items, list.items)
 	list.items = items
 }

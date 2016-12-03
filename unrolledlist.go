@@ -1,8 +1,12 @@
 package container
 
-// An unrolled list is a linked-list of arrays
+//go:generate goreify github.com/badgerodon/container.UnrolledList numeric,string
+
+import "github.com/badgerodon/goreify/generics"
+
+// An UnrolledList is a linked-list of arrays
 type UnrolledList struct {
-	items     [][]interface{} /* ITEM */
+	items     [][]generics.T1
 	size      int
 	arraySize int
 }
@@ -16,7 +20,7 @@ func NewUnrolledList(arraySize int) *UnrolledList {
 }
 
 // Add adds item to the list
-func (list *UnrolledList) Add(item interface{} /* ITEM */) {
+func (list *UnrolledList) Add(item generics.T1) {
 	list.Fill(item)
 }
 
@@ -27,12 +31,12 @@ func (list *UnrolledList) Clear() {
 }
 
 // Contains returns whether or not the list contains the item
-func (list *UnrolledList) Contains(item interface{} /* ITEM */) bool {
+func (list *UnrolledList) Contains(item generics.T1) bool {
 	return list.IndexOf(item) >= 0
 }
 
 // Fill adds all the items to the end of the list
-func (list *UnrolledList) Fill(items ...interface{} /* ITEM */) {
+func (list *UnrolledList) Fill(items ...generics.T1) {
 	if len(items) == 0 {
 		return
 	}
@@ -50,9 +54,9 @@ func (list *UnrolledList) Fill(items ...interface{} /* ITEM */) {
 }
 
 // Get returns the item at the index in the list
-func (list *UnrolledList) Get(idx int) interface{} /* ITEM */ {
+func (list *UnrolledList) Get(idx int) generics.T1 {
 	if idx > list.size {
-		var def interface{} /* ITEM */
+		var def generics.T1
 		return def
 	}
 	return list.get(idx)
@@ -60,7 +64,7 @@ func (list *UnrolledList) Get(idx int) interface{} /* ITEM */ {
 
 // IndexOf returns the index of the item in the list. If the item doesn't
 // exist in the list -1 is returned
-func (list *UnrolledList) IndexOf(item interface{} /* ITEM */) int {
+func (list *UnrolledList) IndexOf(item generics.T1) int {
 	for i, items := range list.items {
 		for j, t := range items {
 			if t == item {
@@ -72,7 +76,7 @@ func (list *UnrolledList) IndexOf(item interface{} /* ITEM */) int {
 }
 
 // Insert inserts the item into the list
-func (list *UnrolledList) Insert(idx int, item interface{} /* ITEM */) {
+func (list *UnrolledList) Insert(idx int, item generics.T1) {
 	list.grow(idx + 1)
 	for i := idx + 1; i < list.size-1; i++ {
 		list.set(i+1, list.get(i))
@@ -86,7 +90,7 @@ func (list *UnrolledList) Len() int {
 }
 
 // Remove removes the item from the list
-func (list *UnrolledList) Remove(item interface{} /* ITEM */) {
+func (list *UnrolledList) Remove(item generics.T1) {
 	idx := list.IndexOf(item)
 	if idx < 0 {
 		return
@@ -108,7 +112,7 @@ func (list *UnrolledList) Reverse() {
 }
 
 // Set sets the item at the index in the list
-func (list *UnrolledList) Set(idx int, item interface{} /* ITEM */) {
+func (list *UnrolledList) Set(idx int, item generics.T1) {
 	list.grow(idx + 1)
 	list.items[idx/list.arraySize][idx%list.arraySize] = item
 }
@@ -118,7 +122,7 @@ func (list *UnrolledList) Swap(i, j int) {
 	list.items[i/list.arraySize][i%list.arraySize] = list.items[j/list.arraySize][j%list.arraySize]
 }
 
-func (list *UnrolledList) get(idx int) interface{} /* ITEM */ {
+func (list *UnrolledList) get(idx int) generics.T1 {
 	return list.items[idx/list.arraySize][idx%list.arraySize]
 }
 
@@ -129,13 +133,13 @@ func (list *UnrolledList) grow(size int) {
 
 	idx := size / list.arraySize
 	for idx >= len(list.items) {
-		list.items = append(list.items, make([]interface{} /* ITEM */, list.arraySize))
+		list.items = append(list.items, make([]generics.T1, list.arraySize))
 	}
 
 	list.size = size
 }
 
-func (list *UnrolledList) set(idx int, item interface{} /* ITEM */) {
+func (list *UnrolledList) set(idx int, item generics.T1) {
 	list.items[idx/list.arraySize][idx%list.arraySize] = item
 }
 
