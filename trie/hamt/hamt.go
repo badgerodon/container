@@ -1,6 +1,7 @@
 package hamt
 
 import (
+	"fmt"
 	"unsafe"
 
 	"github.com/badgerodon/goreify/generics"
@@ -17,18 +18,19 @@ type (
 	}
 )
 
+func (node *internalNode) delete(idx uint32) {
+	mask := uint32(1 << idx)
+	node.internalBMP &= ^mask
+	node.leafBMP &= ^mask
+	node.array[idx] = nil
+}
+
 func (node *internalNode) getInternal(idx uint32) *internalNode {
 	mask := uint32(1 << idx)
 	if node.internalBMP&mask == 0 {
 		return nil
 	}
 	return (*internalNode)(node.array[idx])
-}
-func (node *internalNode) setInternal(idx uint32, n *internalNode) {
-	mask := uint32(1 << idx)
-	node.internalBMP |= mask
-	node.leafBMP ^= mask
-	node.array[idx] = unsafe.Pointer(n)
 }
 
 func (node *internalNode) getLeaf(idx uint32) *leafNode {
@@ -38,11 +40,27 @@ func (node *internalNode) getLeaf(idx uint32) *leafNode {
 	}
 	return (*leafNode)(node.array[idx])
 }
+
+func (node *internalNode) len() int {
+	return popcountHD(node.internalBMP) + popcountHD(node.leafBMP)
+}
+
+func (node *internalNode) setInternal(idx uint32, n *internalNode) {
+	mask := uint32(1 << idx)
+	node.internalBMP |= mask
+	node.leafBMP &= ^mask
+	node.array[idx] = unsafe.Pointer(n)
+}
+
 func (node *internalNode) setLeaf(idx uint32, n *leafNode) {
 	mask := uint32(1 << idx)
-	node.internalBMP ^= mask
+	node.internalBMP &= ^mask
 	node.leafBMP |= mask
 	node.array[idx] = unsafe.Pointer(n)
+}
+
+func (node *internalNode) String() string {
+	return fmt.Sprintf("InternalNode(%032b,%032b,%v)", node.internalBMP, node.leafBMP, node.array)
 }
 
 type (
@@ -55,6 +73,10 @@ type (
 
 func (node *leafNode) hash() uint32 {
 	return fnv32a(generics.UnsafeBytes(&node.key))
+}
+
+func (node *leafNode) String() string {
+	return fmt.Sprintf("Leaf(%v,%v)", node.key, node.value)
 }
 
 type (
@@ -75,18 +97,88 @@ func NewHashedArrayMappedTrie() *HashedArrayMappedTrie {
 	return &HashedArrayMappedTrie{}
 }
 
-// Insert inserts an element into the HashedArrayMappedTrie
-func (t *HashedArrayMappedTrie) Insert(key generics.T1, value generics.T2) {
+// Delete removes the key from the trie. It returns true if the key was found.
+func (t *HashedArrayMappedTrie) Delete(key generics.T1) (found bool) {
+	if t.root == nil {
+		return false
+	}
+	leaf := &leafNode{key: key}
+	return t.delete(0, t.root, leaf.key, leaf.hash())
+}
+
+// Get gets a value from the trie.
+func (t *HashedArrayMappedTrie) Get(key generics.T1) (value generics.T2, ok bool) {
+	if t.root == nil {
+		return value, false
+	}
+	leaf := &leafNode{key: key}
+	return t.get(0, t.root, leaf.key, leaf.hash())
+}
+
+// Set sets the key to the value. If it already exists its replaced.
+func (t *HashedArrayMappedTrie) Set(key generics.T1, value generics.T2) {
 	if t.root == nil {
 		t.root = new(internalNode)
 	}
-
 	leaf := &leafNode{key: key, value: value}
-
-	t.insert(0, t.root, leaf, leaf.hash())
+	t.set(0, t.root, leaf, leaf.hash())
 }
 
-func (t *HashedArrayMappedTrie) insert(
+func (t *HashedArrayMappedTrie) delete(
+	lvl uint32,
+	parent *internalNode,
+	key generics.T1,
+	hash uint32,
+) (found bool) {
+	idx := getIndex(hash, lvl)
+
+	// if this is an internal node, traverse down
+	if cur := parent.getInternal(idx); cur != nil {
+		found = t.delete(lvl+1, cur, key, hash)
+		if found && cur.len() == 0 {
+			parent.delete(idx)
+		}
+		return found
+	}
+
+	// if this is a leaf node
+	if cur := parent.getLeaf(idx); cur != nil {
+		// only return if the keys match
+		if generics.Equal(cur.key, key) {
+			parent.delete(idx)
+			return true
+		}
+	}
+
+	return false
+}
+
+func (t *HashedArrayMappedTrie) get(
+	lvl uint32,
+	parent *internalNode,
+	key generics.T1,
+	hash uint32,
+) (value generics.T2, ok bool) {
+	idx := getIndex(hash, lvl)
+
+	// if this is an internal node, traverse down
+	if cur := parent.getInternal(idx); cur != nil {
+		return t.get(lvl+1, cur, key, hash)
+	}
+
+	// if this is a leaf node
+	if cur := parent.getLeaf(idx); cur != nil {
+		// only return if the keys match
+		if generics.Equal(cur.key, key) {
+			return cur.value, true
+		}
+	}
+
+	// guess it doesn't exist
+	return value, false
+}
+
+func (t *HashedArrayMappedTrie) set(
 	lvl uint32,
 	parent *internalNode,
 	child *leafNode,
@@ -96,7 +188,7 @@ func (t *HashedArrayMappedTrie) insert(
 
 	// look to see if we're already an internal node, and if so go down a level
 	if cur := parent.getInternal(idx); cur != nil {
-		t.insert(lvl+1, cur, child, hash)
+		t.set(lvl+1, cur, child, hash)
 		return
 	}
 
@@ -110,8 +202,8 @@ func (t *HashedArrayMappedTrie) insert(
 
 		// convert to an internal node
 		newNode := new(internalNode)
-		t.insert(lvl+1, newNode, cur, cur.hash())
-		t.insert(lvl+1, newNode, child, hash)
+		t.set(lvl+1, newNode, cur, cur.hash())
+		t.set(lvl+1, newNode, child, hash)
 		parent.setInternal(idx, newNode)
 		return
 	}

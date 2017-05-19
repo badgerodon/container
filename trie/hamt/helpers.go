@@ -21,3 +21,13 @@ func fnv32a(data []byte) uint32 {
 	}
 	return hash
 }
+
+// From Hacker's Delight, fig 5.2.
+func popcountHD(x uint32) int {
+	x -= (x >> 1) & 0x55555555
+	x = (x & 0x33333333) + ((x >> 2) & 0x33333333)
+	x = (x + (x >> 4)) & 0x0f0f0f0f
+	x = x + (x >> 8)
+	x = x + (x >> 16)
+	return int(x & 0x0000003f)
+}
