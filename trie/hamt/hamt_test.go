@@ -6,15 +6,23 @@ import (
 	"testing"
 )
 
+// func TestTest(t *testing.T) {
+// 	t.Logf("%064b", maxword<<4)
+// 	t.Fail()
+// }
+
 func Test(t *testing.T) {
-	trie := NewHashedArrayMappedTrie()
+	trie := NewHashArrayMappedTrie()
 
 	_, ok := trie.Get(5)
 	if ok {
 		t.Errorf("expected ok to be false, since nothing has been added")
 	}
 
-	trie.Set(5, 6)
+	isNew := trie.Set(5, 6)
+	if !isNew {
+		t.Errorf("expected setting a previously unset key to return true")
+	}
 	v, ok := trie.Get(5)
 	if !ok {
 		t.Errorf("expected ok to be true")
@@ -32,11 +40,11 @@ func Test(t *testing.T) {
 		t.Errorf("expected value to be 7, got %v", v)
 	}
 
-	trie.Delete(5)
-	_, ok = trie.Get(5)
-	if ok {
-		t.Errorf("expected ok to be false, since nothing has been added")
-	}
+	// trie.Delete(5)
+	// _, ok = trie.Get(5)
+	// if ok {
+	// 	t.Errorf("expected ok to be false, since nothing has been added")
+	// }
 
 	fmt.Println(trie.root)
 	t.FailNow()

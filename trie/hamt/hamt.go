@@ -2,212 +2,253 @@ package hamt
 
 import (
 	"fmt"
+	"strings"
 	"unsafe"
 
 	"github.com/badgerodon/goreify/generics"
 )
 
-const w = 5
+type nodeType byte
 
-type (
-	// an internalNode is an internal node
-	internalNode struct {
-		internalBMP uint32
-		leafBMP     uint32
-		array       [32]unsafe.Pointer
-	}
+const (
+	nodeTypeInternal = iota + 1
+	nodeTypeLeaf
+	nodeTypeLink
 )
 
-func (node *internalNode) delete(idx uint32) {
-	mask := uint32(1 << idx)
-	node.internalBMP &= ^mask
-	node.leafBMP &= ^mask
-	node.array[idx] = nil
+type node struct {
+	Type    nodeType
+	Pointer unsafe.Pointer
 }
 
-func (node *internalNode) getInternal(idx uint32) *internalNode {
-	mask := uint32(1 << idx)
-	if node.internalBMP&mask == 0 {
-		return nil
+func (node node) String() string {
+	switch node.Type {
+	case nodeTypeInternal:
+		return (*internalNode)(node.Pointer).String()
+	case nodeTypeLeaf:
+		return (*leafNode)(node.Pointer).String()
 	}
-	return (*internalNode)(node.array[idx])
+	return ""
 }
 
-func (node *internalNode) getLeaf(idx uint32) *leafNode {
-	mask := uint32(1 << idx)
-	if node.leafBMP&mask == 0 {
-		return nil
-	}
-	return (*leafNode)(node.array[idx])
+type internalNode struct {
+	bitmap word
+	array  [64]node
 }
 
-func (node *internalNode) len() int {
-	return popcountHD(node.internalBMP) + popcountHD(node.leafBMP)
-}
-
-func (node *internalNode) setInternal(idx uint32, n *internalNode) {
-	mask := uint32(1 << idx)
-	node.internalBMP |= mask
-	node.leafBMP &= ^mask
-	node.array[idx] = unsafe.Pointer(n)
-}
-
-func (node *internalNode) setLeaf(idx uint32, n *leafNode) {
-	mask := uint32(1 << idx)
-	node.internalBMP &= ^mask
-	node.leafBMP |= mask
-	node.array[idx] = unsafe.Pointer(n)
+func newInternalNode(size word) *internalNode {
+	mem := make([]byte, unsafe.Sizeof(word(0))+uintptr(size)*unsafe.Sizeof(uintptr(0)))
+	return (*internalNode)(unsafe.Pointer(&mem[0]))
 }
 
 func (node *internalNode) String() string {
-	return fmt.Sprintf("InternalNode(%032b,%032b,%v)", node.internalBMP, node.leafBMP, node.array)
+	var els []string
+	for i, idx := range getBitmapIndexes(node.bitmap) {
+		els = append(els, fmt.Sprintf("%02d:%s", idx, node.array[i]))
+		i++
+	}
+	return "I{" + strings.Join(els, ",") + "}"
 }
 
-type (
-	// a leafNode is a leaf node
-	leafNode struct {
-		key   generics.T1
-		value generics.T2
+func (node *internalNode) delete(idx word) *internalNode {
+	mask := word(1 << word(idx))
+	// if not set, nothing to do
+	if mask&node.bitmap == 0 {
+		return node
 	}
-)
 
-func (node *leafNode) hash() uint32 {
-	return fnv32a(generics.UnsafeBytes(&node.key))
+	size := node.len()
+
+	nn := newInternalNode(size - 1)
+	nn.bitmap ^= mask
+	pos := 0
+	for i := word(0); i < size; i++ {
+		if i == idx {
+			continue
+		}
+		nn.array[pos] = node.array[i]
+		pos++
+	}
+	return nn
+}
+
+func (node *internalNode) get(idx word) node {
+	return node.array[getArrayIndex(node.bitmap, idx)]
+}
+
+func (node *internalNode) len() word {
+	return popcount(node.bitmap)
+}
+
+func (node *internalNode) set(idx word, child node) *internalNode {
+	pos := getArrayIndex(node.bitmap, idx)
+	fmt.Println("INDEX=", idx, "POSITION=", pos)
+	size := node.len()
+	mask := word(1 << idx)
+
+	// need to add a new element to the array
+	if node.bitmap&mask == 0 {
+		newNode := newInternalNode(size + 1)
+		newNode.bitmap = node.bitmap
+		copy(newNode.array[:pos], node.array[:pos])
+		copy(newNode.array[pos+1:], node.array[pos:size])
+		node = newNode
+	}
+
+	fmt.Println("NODE!", node)
+
+	node.bitmap |= mask
+	node.array[pos] = child
+
+	return node
+}
+
+type leafNode struct {
+	key generics.T1
+	val generics.T2
+}
+
+func (node *leafNode) Hash() word {
+	return word(fnv32a(generics.UnsafeBytes(&node.key)))
 }
 
 func (node *leafNode) String() string {
-	return fmt.Sprintf("Leaf(%v,%v)", node.key, node.value)
+	return fmt.Sprintf("L{%v:%v}", node.key, node.val)
 }
 
-type (
-	// HashedArrayMappedTrie is a trie with two types of nodes: internal nodes and
-	// leaf nodes. Leaf nodes contain a key and value. Internal nodes contain an
-	// array of points to internal or leaf nodes and a bitmap to improve lookup
-	// performance.
-	//
-	// Keys are hashed and each level uses W bits from the key. This implementation
-	// uses 5 for W so that the number can be represented with a 32 bit integer.
-	HashedArrayMappedTrie struct {
-		root *internalNode
-	}
-)
-
-// NewHashedArrayMappedTrie returns a new HashedArrayMappedTrie
-func NewHashedArrayMappedTrie() *HashedArrayMappedTrie {
-	return &HashedArrayMappedTrie{}
+type linkNode struct {
+	leafNode
+	next *linkNode
 }
 
-// Delete removes the key from the trie. It returns true if the key was found.
-func (t *HashedArrayMappedTrie) Delete(key generics.T1) (found bool) {
-	if t.root == nil {
-		return false
-	}
-	leaf := &leafNode{key: key}
-	return t.delete(0, t.root, leaf.key, leaf.hash())
-}
-
-// Get gets a value from the trie.
-func (t *HashedArrayMappedTrie) Get(key generics.T1) (value generics.T2, ok bool) {
-	if t.root == nil {
-		return value, false
-	}
-	leaf := &leafNode{key: key}
-	return t.get(0, t.root, leaf.key, leaf.hash())
-}
-
-// Set sets the key to the value. If it already exists its replaced.
-func (t *HashedArrayMappedTrie) Set(key generics.T1, value generics.T2) {
-	if t.root == nil {
-		t.root = new(internalNode)
-	}
-	leaf := &leafNode{key: key, value: value}
-	t.set(0, t.root, leaf, leaf.hash())
-}
-
-func (t *HashedArrayMappedTrie) delete(
-	lvl uint32,
-	parent *internalNode,
-	key generics.T1,
-	hash uint32,
-) (found bool) {
-	idx := getIndex(hash, lvl)
-
-	// if this is an internal node, traverse down
-	if cur := parent.getInternal(idx); cur != nil {
-		found = t.delete(lvl+1, cur, key, hash)
-		if found && cur.len() == 0 {
-			parent.delete(idx)
+func (node *linkNode) add(leaf *leafNode) (isNew bool) {
+	for {
+		if generics.Equal(leaf.key, node.key) {
+			node.leafNode = *leaf
+			return false
 		}
-		return found
-	}
-
-	// if this is a leaf node
-	if cur := parent.getLeaf(idx); cur != nil {
-		// only return if the keys match
-		if generics.Equal(cur.key, key) {
-			parent.delete(idx)
-			return true
+		if node.next == nil {
+			break
 		}
+		node = node.next
 	}
-
-	return false
+	node.next = &linkNode{
+		leafNode: *leaf,
+	}
+	return true
 }
 
-func (t *HashedArrayMappedTrie) get(
-	lvl uint32,
-	parent *internalNode,
-	key generics.T1,
-	hash uint32,
-) (value generics.T2, ok bool) {
-	idx := getIndex(hash, lvl)
+type HashArrayMappedTrie struct {
+	w    word
+	root *internalNode
+}
 
-	// if this is an internal node, traverse down
-	if cur := parent.getInternal(idx); cur != nil {
-		return t.get(lvl+1, cur, key, hash)
+func NewHashArrayMappedTrie() *HashArrayMappedTrie {
+	return &HashArrayMappedTrie{
+		w: 6,
 	}
+}
 
-	// if this is a leaf node
-	if cur := parent.getLeaf(idx); cur != nil {
-		// only return if the keys match
-		if generics.Equal(cur.key, key) {
-			return cur.value, true
+func (trie *HashArrayMappedTrie) Get(key generics.T1) (val generics.T2, ok bool) {
+	if trie.root == nil {
+		return val, false
+	}
+	hash := (&leafNode{key: key}).Hash()
+	return trie.get(0, trie.root, key, hash)
+}
+
+func (trie *HashArrayMappedTrie) Set(key generics.T1, val generics.T2) (isNew bool) {
+	if trie.root == nil {
+		trie.root = newInternalNode(0)
+	}
+	lnode := &leafNode{
+		key: key,
+		val: val,
+	}
+	hash := lnode.Hash()
+	trie.root, isNew = trie.set(0, trie.root, lnode, hash)
+	return isNew
+}
+
+func (trie *HashArrayMappedTrie) get(lvl word, parent *internalNode, key generics.T1, hash word) (val generics.T2, ok bool) {
+	idx := getHashIndex(hash, trie.w, lvl)
+	child := parent.get(idx)
+	switch child.Type {
+	case nodeTypeInternal:
+		inode := (*internalNode)(child.Pointer)
+		return trie.get(lvl+1, inode, key, hash)
+	case nodeTypeLeaf:
+		lnode := (*leafNode)(child.Pointer)
+		if generics.Equal(key, lnode.key) {
+			return lnode.val, true
+		}
+	case nodeTypeLink:
+		llnode := (*linkNode)(child.Pointer)
+		for llnode != nil {
+			if generics.Equal(key, llnode.key) {
+				return llnode.val, true
+			}
+			llnode = llnode.next
 		}
 	}
-
-	// guess it doesn't exist
-	return value, false
+	return val, false
 }
 
-func (t *HashedArrayMappedTrie) set(
-	lvl uint32,
-	parent *internalNode,
-	child *leafNode,
-	hash uint32,
-) {
-	idx := getIndex(hash, lvl)
-
-	// look to see if we're already an internal node, and if so go down a level
-	if cur := parent.getInternal(idx); cur != nil {
-		t.set(lvl+1, cur, child, hash)
-		return
-	}
-
-	// we have a leaf node
-	if cur := parent.getLeaf(idx); cur != nil {
-		// if we're equal, replace
-		if generics.Equal(cur.key, child.key) {
-			cur.value = child.value
-			return
+func (trie *HashArrayMappedTrie) set(lvl word, parent *internalNode, lnode *leafNode, hash word) (newNode *internalNode, isNew bool) {
+	idx := getHashIndex(hash, trie.w, lvl)
+	child := parent.get(idx)
+	switch child.Type {
+	case nodeTypeInternal:
+		inode := (*internalNode)(child.Pointer)
+		newNode, isNew = trie.set(lvl+1, inode, lnode, hash)
+		newNode = parent.set(idx, node{
+			Type:    nodeTypeInternal,
+			Pointer: unsafe.Pointer(newNode),
+		})
+		return newNode, isNew
+	case nodeTypeLeaf:
+		enode := (*leafNode)(child.Pointer)
+		if generics.Equal(lnode.key, enode.key) {
+			// replace
+			parent.set(idx, node{
+				Type:    nodeTypeLeaf,
+				Pointer: unsafe.Pointer(lnode),
+			})
+			return parent, false
+		} else if lvl == maxLevel(trie.w) {
+			// convert to link
+			llnode := &linkNode{
+				leafNode: *lnode,
+			}
+			llnode.add(enode)
+			parent.set(idx, node{
+				Type:    nodeTypeLink,
+				Pointer: unsafe.Pointer(llnode),
+			})
+			return parent, true
+		} else {
+			// convert to internal
+			inode := newInternalNode(0)
+			trie.set(lvl+1, inode, lnode, hash)
+			trie.set(lvl+1, inode, enode, enode.Hash())
+			parent.set(idx, node{
+				Type:    nodeTypeInternal,
+				Pointer: unsafe.Pointer(inode),
+			})
+			return parent, true
 		}
-
-		// convert to an internal node
-		newNode := new(internalNode)
-		t.set(lvl+1, newNode, cur, cur.hash())
-		t.set(lvl+1, newNode, child, hash)
-		parent.setInternal(idx, newNode)
-		return
+	case nodeTypeLink:
+		llnode := (*linkNode)(child.Pointer)
+		return parent, llnode.add(lnode)
+	default:
+		fmt.Println("ADD LEAF")
+		fmt.Println("|", parent)
+		// create a leaf node
+		newNode := parent.set(idx, node{
+			Type:    nodeTypeLeaf,
+			Pointer: unsafe.Pointer(lnode),
+		})
+		fmt.Println("|", newNode)
+		return newNode, true
 	}
-
-	// no node, create a leaf node
-	parent.setLeaf(idx, child)
 }
